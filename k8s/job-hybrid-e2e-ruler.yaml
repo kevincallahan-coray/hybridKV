@@ -44,6 +44,13 @@ spec:
           volumeMounts:
             - name: repo
               mountPath: /repo
+          resources:
+            requests:
+              cpu: "250m"
+              memory: 256Mi
+            limits:
+              cpu: "250m"
+              memory: 256Mi
       containers:
         - name: run
           image: gitlab-registry.nrp-nautilus.io/prp/jupyter-stack/prp
@@ -83,8 +90,8 @@ spec:
               value: expandable_segments:True
           resources:
             requests:
-              cpu: "2"
-              memory: 24Gi
+              cpu: "4"
+              memory: 28Gi
               nvidia.com/gpu: "1"
             limits:
               cpu: "4"
