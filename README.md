@@ -48,7 +48,15 @@ kubectl apply -f k8s\job-hybrid-validate.yaml
 kubectl wait --for=condition=complete job/hybridkv-validate --timeout=60m
 kubectl logs job/hybridkv-validate
 ```
-Continue only on `HYBRID VALIDATION: PASS`. Then:
+Continue only on `HYBRID VALIDATION: PASS`. Then check against prior RULER results:
+
+```bat
+kubectl apply -f k8s\job-hybrid-validate-ruler.yaml
+```
+`full` must reproduce the earlier dense SDPA 4K/100 scores from adaptive-SANTA
+(fwe 84.67, niah_multivalue 100, qa_1 90). The job also runs snap1024/2048 and two
+matched-traffic hybrids as a first look.
+
 
 1. **Oracle merit test** (cheap, ~1-2 h): `kubectl apply -f k8s\job-hybrid-oracle-ruler.yaml`
    Runs 4 RULER-4K tasks × 25 examples, measures operator error against K+V rows, with no compounding.
@@ -56,9 +64,9 @@ Continue only on `HYBRID VALIDATION: PASS`. Then:
 3. **LongBench (SnapKV Table 1 reproduction)**:
    `kubectl apply -f k8s\job-longbench-prepare.yaml`, then
    `kubectl apply -f k8s\job-hybrid-e2e-longbench.yaml`.
-   The default model is Mistral-7B-Instruct-v0.2, the paper's model (gated: accept its licence on HF).
-   Reference numbers come from SnapKV Table 1 (Mistral, All KV vs 1024/2048/4096).
-   Our `full` and `snap{1024,2048,4096}` rows should land near them before the hybrid rows mean anything.
+   The model is Llama-3.1-8B-Instruct (SnapKV's Table 1 used Mistral-7B-Instruct-v0.2, so compare
+   the *drop* from `full` to `snap{1024,2048,4096}` with the paper's drop, not absolute scores).
+   That drop should look SnapKV-like before the hybrid rows mean anything.
 4. `scripts\fetch-results.bat` and then `python analyze_hybrid.py results\hybridkv`.
 
 Wait on jobs with `kubectl wait`, never `sleep`. Every job here is finite and exits when done.

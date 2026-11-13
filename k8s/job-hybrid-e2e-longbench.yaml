@@ -2,10 +2,10 @@
 # kernel 7, budgets 1024/2048/4096, middle truncation to 31500 tokens) plus
 # hybrids at matched K+V row traffic.  One indexed pod per English dataset.
 #
-# MODEL: the SnapKV paper's model is mistralai/Mistral-7B-Instruct-v0.2 (gated:
-# accept its licence on Hugging Face with the account behind the hf-token
-# secret first).  Swap to meta-llama/Meta-Llama-3.1-8B-Instruct to stay on
-# the SANTA paper's model.
+# MODEL: Llama-3.1-8B-Instruct (the SANTA paper's model).  SnapKV's Table 1
+# used Mistral-7B-Instruct-v0.2, so absolute numbers will differ from the
+# paper; compare full vs snap{1024,2048,4096} deltas instead.  Prompts are
+# middle-truncated to 31500 tokens to match the SnapKV/LongBench setting.
 #
 # Pilot: N_EXAMPLES=50 per dataset.  Set to 1000 for the full set (all rows).
 apiVersion: batch/v1
@@ -72,7 +72,7 @@ spec:
                 --methods "$METHODS"
           env:
             - name: MODEL
-              value: mistralai/Mistral-7B-Instruct-v0.2
+              value: meta-llama/Meta-Llama-3.1-8B-Instruct
             - name: N_EXAMPLES
               value: "50"
             - name: HF_TOKEN
