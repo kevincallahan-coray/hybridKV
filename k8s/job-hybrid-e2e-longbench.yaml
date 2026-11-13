@@ -1,0 +1,112 @@
+# Phase 3: SnapKV LongBench reproduction (Table 1 settings: window 32, max-pool
+# kernel 7, budgets 1024/2048/4096, middle truncation to 31500 tokens) plus
+# hybrids at matched K+V row traffic.  One indexed pod per English dataset.
+#
+# MODEL: the SnapKV paper's model is mistralai/Mistral-7B-Instruct-v0.2 (gated:
+# accept its licence on Hugging Face with the account behind the hf-token
+# secret first).  Swap to meta-llama/Meta-Llama-3.1-8B-Instruct to stay on
+# the SANTA paper's model.
+#
+# Pilot: N_EXAMPLES=50 per dataset.  Set to 1000 for the full set (all rows).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hybridkv-e2e-longbench
+spec:
+  completionMode: Indexed
+  completions: 16
+  parallelism: 4
+  backoffLimitPerIndex: 1
+  maxFailedIndexes: 16
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.memory
+                    operator: Gt
+                    values: ["40000"]
+                  - key: nvidia.com/gpu.compute.major
+                    operator: Gt
+                    values: ["7"]
+      initContainers:
+        - name: clone
+          image: alpine/git
+          command: ["sh", "-c"]
+          args:
+            - git clone --depth 1 https://github.com/kevincallahan-coray/hybridKV.git /repo
+          volumeMounts:
+            - name: repo
+              mountPath: /repo
+      containers:
+        - name: run
+          image: gitlab-registry.nrp-nautilus.io/prp/jupyter-stack/prp
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              DS=(narrativeqa qasper multifieldqa_en hotpotqa 2wikimqa musique gov_report qmsum multi_news trec triviaqa samsum passage_count passage_retrieval_en lcc repobench-p)
+              TASK=${DS[$JOB_COMPLETION_INDEX]}
+              LB=/shared/ruler/data/longbench
+              TAG=$(basename "$MODEL")
+              OUT=/shared/ruler/results/hybridkv/longbench_$TAG/$TASK
+              test -f "$LB/$TASK.jsonl" && test -f "$LB/metrics.py"
+              mkdir -p "$OUT"
+              source /repo/setup_env.sh
+              cd /repo
+              METHODS="full,snap1024,snap2048,snap4096,snap1536,snap3072"
+              METHODS="$METHODS,snap1536+sys128,snap1536+top128"
+              METHODS="$METHODS,snap3072+sys256,snap3072+top256"
+              METHODS="$METHODS,snap6144+sys512,snap6144+top512"
+              python run_hybrid.py --benchmark longbench --mode e2e \
+                --dataset "$LB/$TASK.jsonl" --task "$TASK" --longbench-dir "$LB" \
+                --output-dir "$OUT" --model "$MODEL" --max-examples "$N_EXAMPLES" \
+                --max-input-tokens 31500 --window 32 --kernel 7 --pool max \
+                --methods "$METHODS"
+          env:
+            - name: MODEL
+              value: mistralai/Mistral-7B-Instruct-v0.2
+            - name: N_EXAMPLES
+              value: "50"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+            - name: HF_HOME
+              value: /tmp/hf
+            - name: PYTORCH_CUDA_ALLOC_CONF
+              value: expandable_segments:True
+          resources:
+            requests:
+              cpu: "2"
+              memory: 32Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "4"
+              memory: 40Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: repo
+              mountPath: /repo
+            - name: shared
+              mountPath: /shared
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: repo
+          emptyDir: {}
+        - name: shared
+          persistentVolumeClaim:
+            claimName: kevin-ruler-shared
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi

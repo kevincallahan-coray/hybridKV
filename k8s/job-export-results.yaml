@@ -1,0 +1,38 @@
+# Streams the hybrid results (CSVs + prediction JSONL, no .npz) as base64 through
+# the pod log, then exits.  No idle pod, no sleep.  Used by
+# scripts\fetch-snapkv-results.bat.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hybridkv-export
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: export
+          image: busybox:1.36
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              cd /shared/ruler/results
+              test -d hybridkv
+              tar -czf - hybridkv | base64
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 128Mi
+            limits:
+              cpu: "500m"
+              memory: 512Mi
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+              readOnly: true
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: kevin-ruler-shared

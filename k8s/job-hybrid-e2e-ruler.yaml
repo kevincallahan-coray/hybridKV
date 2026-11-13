@@ -1,0 +1,109 @@
+# Phase 2: end-to-end RULER 4K accuracy at matched K+V row traffic.
+# One shared exact prefill per example, then every method decodes from its own
+# compressed cache, so comparisons are paired per example.
+# Matched-traffic triples (per KV head, ignoring the few generated tokens):
+#   snap512  : 512 K + 512 V  = 1024    vs  snap768+sys/top{32,64}   = 768 + U
+#   snap1024 : 1024 + 1024    = 2048    vs  snap1536+sys/top{64,128} = 1536 + U
+#   snap2048 : 2048 + 2048    = 4096    vs  snap3072+sys/top{128,256}= 3072 + U
+# U (union of V rows across the 4 query heads of a GQA group) is <= 4S and is
+# measured; plot score against the measured mean_KV_rows, not against S.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hybridkv-e2e-ruler4k
+spec:
+  completionMode: Indexed
+  completions: 4
+  parallelism: 4
+  backoffLimitPerIndex: 1
+  maxFailedIndexes: 4
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.memory
+                    operator: Gt
+                    values: ["20000"]
+                  - key: nvidia.com/gpu.compute.major
+                    operator: Gt
+                    values: ["7"]
+      initContainers:
+        - name: clone
+          image: alpine/git
+          command: ["sh", "-c"]
+          args:
+            - git clone --depth 1 https://github.com/kevincallahan-coray/hybridKV.git /repo
+          volumeMounts:
+            - name: repo
+              mountPath: /repo
+      containers:
+        - name: run
+          image: gitlab-registry.nrp-nautilus.io/prp/jupyter-stack/prp
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              TASKS=(fwe niah_multivalue qa_1 qa_2)
+              TASK=${TASKS[$JOB_COMPLETION_INDEX]}
+              DATA=/shared/ruler/data/4096_100/$TASK/validation.jsonl
+              OUT=/shared/ruler/results/hybridkv/e2e_4096/$TASK
+              test -f "$DATA"
+              mkdir -p "$OUT"
+              source /repo/setup_env.sh
+              cd /repo
+              METHODS="full,snap512,snap768,snap1024,snap1536,snap2048,snap3072"
+              METHODS="$METHODS,snap768+sys32,snap768+sys64,snap768+top32,snap768+top64"
+              METHODS="$METHODS,snap1536+sys64,snap1536+sys128,snap1536+top64,snap1536+top128"
+              METHODS="$METHODS,snap3072+sys128,snap3072+sys256,snap3072+top128,snap3072+top256"
+              python run_hybrid.py --benchmark ruler --mode e2e \
+                --dataset "$DATA" --task "$TASK" --output-dir "$OUT" \
+                --model "$MODEL" --max-examples "$N_EXAMPLES" --max-input-tokens 4096 \
+                --window 32 --kernel 7 --pool max --methods "$METHODS"
+          env:
+            - name: MODEL
+              value: meta-llama/Meta-Llama-3.1-8B-Instruct
+            - name: N_EXAMPLES
+              value: "50"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+            - name: HF_HOME
+              value: /tmp/hf
+            - name: PYTORCH_CUDA_ALLOC_CONF
+              value: expandable_segments:True
+          resources:
+            requests:
+              cpu: "2"
+              memory: 24Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "4"
+              memory: 32Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: repo
+              mountPath: /repo
+            - name: shared
+              mountPath: /shared
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: repo
+          emptyDir: {}
+        - name: shared
+          persistentVolumeClaim:
+            claimName: kevin-ruler-shared
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi

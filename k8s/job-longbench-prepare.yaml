@@ -1,0 +1,52 @@
+# CPU-only: download LongBench v1 (data.zip from the THUDM/LongBench HF dataset),
+# apply the official per-dataset prompt templates, write JSONL + metrics.py to
+#   /shared/ruler/data/longbench/
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: longbench-prepare
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: prepare
+          image: python:3.11-slim
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              apt-get update -qq
+              apt-get install -y -qq git unzip ca-certificates >/dev/null
+              python -m venv /tmp/lb-venv
+              source /tmp/lb-venv/bin/activate
+              python -m pip install -q huggingface_hub
+              git clone --depth 1 https://github.com/kevincallahan-coray/hybridKV.git /tmp/repo
+              git clone --depth 1 https://github.com/THUDM/LongBench.git /tmp/LongBench
+              python -c "from huggingface_hub import hf_hub_download as d; print(d('THUDM/LongBench', 'data.zip', repo_type='dataset', local_dir='/tmp/lbzip'))"
+              mkdir -p /tmp/lbdata && unzip -q /tmp/lbzip/data.zip -d /tmp/lbdata
+              OUT=/shared/ruler/data/longbench
+              rm -rf "$OUT" && mkdir -p "$OUT"
+              python /tmp/repo/prepare_longbench.py \
+                --data-root /tmp/lbdata --repo /tmp/LongBench --out "$OUT"
+              chgrp -R 1000 "$OUT" && chmod -R g+rwX "$OUT"
+              ls -lh "$OUT"
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+            limits:
+              cpu: "2"
+              memory: 8Gi
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: kevin-ruler-shared

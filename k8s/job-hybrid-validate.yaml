@@ -1,0 +1,76 @@
+# Correctness gate for the SnapKV+SANTA harness.  Must end with
+#   HYBRID VALIDATION: PASS
+# before any sweep is launched.  Finite Job, no sleeps.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hybridkv-validate
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.memory
+                    operator: Gt
+                    values: ["20000"]
+                  - key: nvidia.com/gpu.compute.major
+                    operator: Gt
+                    values: ["7"]
+      initContainers:
+        - name: clone
+          image: alpine/git
+          command: ["sh", "-c"]
+          args:
+            - git clone --depth 1 https://github.com/kevincallahan-coray/hybridKV.git /repo
+          volumeMounts:
+            - name: repo
+              mountPath: /repo
+      containers:
+        - name: run
+          image: gitlab-registry.nrp-nautilus.io/prp/jupyter-stack/prp
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              source /repo/setup_env.sh
+              cd /repo
+              python validate_hybrid.py --model "$MODEL"
+          env:
+            - name: MODEL
+              value: meta-llama/Meta-Llama-3.1-8B-Instruct
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+            - name: HF_HOME
+              value: /tmp/hf
+            - name: PYTORCH_CUDA_ALLOC_CONF
+              value: expandable_segments:True
+          resources:
+            requests:
+              cpu: "2"
+              memory: 24Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "4"
+              memory: 32Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: repo
+              mountPath: /repo
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: repo
+          emptyDir: {}
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
