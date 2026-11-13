@@ -88,13 +88,15 @@ spec:
             - name: PYTORCH_CUDA_ALLOC_CONF
               value: expandable_segments:True
           resources:
+            # GPU-bound; 8B bf16 load peaks ~16 GB host RAM.  Small requests
+            # fit more nodes on a busy cluster (limit/request <= 1.2).
             requests:
-              cpu: "4"
-              memory: 28Gi
+              cpu: "2"
+              memory: 20Gi
               nvidia.com/gpu: "1"
             limits:
-              cpu: "4"
-              memory: 32Gi
+              cpu: "2"
+              memory: 24Gi
               nvidia.com/gpu: "1"
           volumeMounts:
             - name: repo
@@ -112,4 +114,4 @@ spec:
         - name: dshm
           emptyDir:
             medium: Memory
-            sizeLimit: 8Gi
+            sizeLimit: 2Gi
