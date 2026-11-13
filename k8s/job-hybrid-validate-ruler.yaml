@@ -54,7 +54,7 @@ spec:
           args:
             - |
               set -euo pipefail
-              TASKS=(fwe niah_multivalue qa_1 qa_2)
+              read -r -a TASKS <<< "$TASK_LIST"
               TASK=${TASKS[$JOB_COMPLETION_INDEX]}
               DATA=/shared/ruler/data/4096_100/$TASK/validation.jsonl
               OUT=/shared/ruler/results/hybridkv/validate_4096/$TASK
@@ -68,6 +68,9 @@ spec:
                 --window 32 --kernel 7 --pool max \
                 --methods "full,snap1024,snap2048,snap1536+sys128,snap1536+top128"
           env:
+            # completions must equal the number of tasks listed here
+            - name: TASK_LIST
+              value: "fwe niah_multivalue qa_1 qa_2"
             - name: MODEL
               value: meta-llama/Meta-Llama-3.1-8B-Instruct
             - name: HF_TOKEN
@@ -80,13 +83,15 @@ spec:
             - name: PYTORCH_CUDA_ALLOC_CONF
               value: expandable_segments:True
           resources:
+            # GPU-bound; 8B bf16 load peaks ~16 GB host RAM.  Small requests
+            # fit more nodes on a busy cluster (limit/request <= 1.2).
             requests:
-              cpu: "4"
-              memory: 28Gi
+              cpu: "2"
+              memory: 20Gi
               nvidia.com/gpu: "1"
             limits:
-              cpu: "4"
-              memory: 32Gi
+              cpu: "2"
+              memory: 24Gi
               nvidia.com/gpu: "1"
           volumeMounts:
             - name: repo
@@ -104,4 +109,4 @@ spec:
         - name: dshm
           emptyDir:
             medium: Memory
-            sizeLimit: 8Gi
+            sizeLimit: 2Gi
